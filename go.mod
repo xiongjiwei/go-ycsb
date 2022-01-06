@@ -33,10 +33,8 @@ require (
 	github.com/spf13/cobra v1.0.0
 	github.com/tecbot/gorocksdb v0.0.0-20191217155057-f0fad39f321c
 	github.com/tikv/client-go/v2 v2.0.0-rc.0.20220104074529-d2f0290d0189
-	github.com/xdg/scram v0.0.0-20180814205039-7eeb5667e42c // indirect
-	github.com/xdg/stringprep v1.0.0 // indirect
 	github.com/yuin/gopher-lua v0.0.0-20181031023651-12c4817b42c5 // indirect
-	go.mongodb.org/mongo-driver v1.0.2
+	go.mongodb.org/mongo-driver v1.5.1
 	go.opencensus.io v0.22.2 // indirect
 	golang.org/x/exp v0.0.0-20191129062945-2f5052295587 // indirect
 	golang.org/x/oauth2 v0.0.0-20191202225959-858c2ad4c8b6 // indirect
