@@ -28,7 +28,7 @@ type WorkloadCreator interface {
 // Workload defines different workload for YCSB.
 type Workload interface {
 	// Initialize the workload.
-	Init(db DB) error
+	Init(gbk bool) []string
 
 	// Close closes the workload.
 	Close() error
@@ -44,16 +44,16 @@ type Workload interface {
 	Load(ctx context.Context, db DB, totalCount int64) error
 
 	// DoInsert does one insert operation.
-	DoInsert(ctx context.Context, db DB) error
+	DoInsert(ctx context.Context, db DB) []string
 
 	// DoBatchInsert does batch insert.
-	DoBatchInsert(ctx context.Context, batchSize int, db DB) error
+	DoBatchInsert(ctx context.Context, batchSize int, db DB) []string
 
 	// DoTransaction does one transaction operation.
-	DoTransaction(ctx context.Context, db DB) error
+	DoTransaction(ctx context.Context, db DB) []string
 
 	// DoBatchTransaction does the batch transaction operation.
-	DoBatchTransaction(ctx context.Context, batchSize int, db DB) error
+	DoBatchTransaction(ctx context.Context, batchSize int, db DB) []string
 }
 
 var workloadCreators = map[string]WorkloadCreator{}

@@ -98,7 +98,7 @@ func (r *RowCodec) Encode(buf []byte, values map[string][]byte) ([]byte, error) 
 // FieldPair is a pair to hold field + value.
 type FieldPair struct {
 	Field string
-	Value []byte
+	Value string
 }
 
 // FieldPairs implements sort interface for []FieldPair
@@ -125,7 +125,7 @@ func NewFieldPairs(values map[string][]byte) FieldPairs {
 	for field, value := range values {
 		pairs = append(pairs, FieldPair{
 			Field: field,
-			Value: value,
+			Value: string(value),
 		})
 	}
 

@@ -134,34 +134,30 @@ func createOperationGenerator(p *properties.Properties) *generator.Discrete {
 }
 
 // Init --create all schemas for ycsb workload
-func (c *core) Init(db ycsb.DB) error {
+func (c *core) Init(gbk bool) []string {
 	// need to redesign the relation btw workload and db interface later.
-	sqlDB := db.ToSqlDB()
-	if sqlDB != nil {
-		tableName := c.p.GetString(prop.TableName, prop.TableNameDefault)
-		if c.p.GetBool(prop.DropData, prop.DropDataDefault) && !c.p.GetBool(prop.DoTransactions, true) {
-			if _, err := sqlDB.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName)); err != nil {
-				return err
-			}
-		}
-
-		fieldCount := c.p.GetInt64(prop.FieldCount, prop.FieldCountDefault)
-		fieldLength := c.p.GetInt64(prop.FieldLength, prop.FieldLengthDefault)
-
-		buf := new(bytes.Buffer)
-		s := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (YCSB_KEY VARCHAR(64) PRIMARY KEY", tableName)
-		buf.WriteString(s)
-
-		for i := int64(0); i < fieldCount; i++ {
-			buf.WriteString(fmt.Sprintf(", FIELD%d VARCHAR(%d)", i, fieldLength))
-		}
-
-		buf.WriteString(");")
-
-		_, err := sqlDB.Exec(buf.String())
-		return err
+	var charset = "CHARSET UTF8MB4"
+	if gbk {
+		charset = "CHARSET GBK"
 	}
-	return nil
+	sqls := make([]string, 0)
+	tableName := c.p.GetString(prop.TableName, prop.TableNameDefault)
+	sqls = append(sqls, fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
+
+	fieldCount := c.p.GetInt64(prop.FieldCount, prop.FieldCountDefault)
+	fieldLength := c.p.GetInt64(prop.FieldLength, prop.FieldLengthDefault)
+
+	buf := new(bytes.Buffer)
+	s := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (YCSB_KEY VARCHAR(64) %s PRIMARY KEY", tableName, charset)
+	buf.WriteString(s)
+
+	for i := int64(0); i < fieldCount; i++ {
+		buf.WriteString(fmt.Sprintf(", FIELD%d VARCHAR(%d) %s", i, fieldLength, charset))
+	}
+
+	buf.WriteString(");")
+	sqls = append(sqls, buf.String())
+	return sqls
 }
 
 // Load implements the Workload Load interface.
@@ -252,9 +248,8 @@ func (c *core) putValues(values map[string][]byte) {
 func (c *core) buildRandomValue(state *coreState) []byte {
 	// TODO: use pool for the buffer
 	r := state.r
-	buf := c.getValueBuffer(int(c.fieldLengthGenerator.Next(r)))
-	util.RandBytes(r, buf)
-	return buf
+	//buf := c.getValueBuffer(int(c.fieldLengthGenerator.Next(r)))
+	return util.RandBytes(r, int(c.fieldLengthGenerator.Next(r)))
 }
 
 func (c *core) buildDeterministicValue(state *coreState, key string, fieldKey string) []byte {
@@ -290,7 +285,7 @@ func (c *core) verifyRow(state *coreState, key string, values map[string][]byte)
 }
 
 // DoInsert implements the Workload DoInsert interface.
-func (c *core) DoInsert(ctx context.Context, db ycsb.DB) error {
+func (c *core) DoInsert(ctx context.Context, db ycsb.DB) []string {
 	state := ctx.Value(stateKey).(*coreState)
 	r := state.r
 	keyNum := c.keySequence.Next(r)
@@ -298,96 +293,39 @@ func (c *core) DoInsert(ctx context.Context, db ycsb.DB) error {
 	values := c.buildValues(state, dbKey)
 	defer c.putValues(values)
 
-	numOfRetries := int64(0)
+	var buf bytes.Buffer
+	args := make([]string, 0, 1+len(values))
+	args = append(args, dbKey)
 
-	var err error
-	for {
-		err = db.Insert(ctx, c.table, dbKey, values)
-		if err == nil {
-			break
-		}
+	buf.WriteString("INSERT IGNORE INTO ")
+	buf.WriteString(c.table)
+	buf.WriteString(" (YCSB_KEY")
 
-		select {
-		case <-ctx.Done():
-			if ctx.Err() == context.Canceled {
-				return nil
-			}
-		default:
-		}
+	pairs := util.NewFieldPairs(values)
+	for _, p := range pairs {
+		args = append(args, p.Value)
+		buf.WriteString(" ,")
+		buf.WriteString(p.Field)
+	}
+	buf.WriteString(") VALUES (\"" + args[0] + "\"")
 
-		// Retry if configured. Without retrying, the load process will fail
-		// even if one single insertion fails. User can optionally configure
-		// an insertion retry limit (default is 0) to enable retry.
-		numOfRetries++
-		if numOfRetries > c.insertionRetryLimit {
-			break
-		}
-
-		// Sleep for a random time betweensz [0.8, 1.2)*insertionRetryInterval
-		sleepTimeMs := float64((c.insertionRetryInterval * 1000)) * (0.8 + 0.4*r.Float64())
-
-		time.Sleep(time.Duration(sleepTimeMs) * time.Millisecond)
+	for i := 0; i < len(pairs); i++ {
+		buf.WriteString(" ,\"" + args[i+1] + "\"")
 	}
 
-	return err
+	buf.WriteByte(')')
+
+	return []string{buf.String()}
 }
 
 // DoBatchInsert implements the Workload DoBatchInsert interface.
-func (c *core) DoBatchInsert(ctx context.Context, batchSize int, db ycsb.DB) error {
-	batchDB, ok := db.(ycsb.BatchDB)
-	if !ok {
-		return fmt.Errorf("the %T does't implement the batchDB interface", db)
-	}
-	state := ctx.Value(stateKey).(*coreState)
-	r := state.r
-	var keys []string
-	var values []map[string][]byte
-	for i := 0; i < batchSize; i++ {
-		keyNum := c.keySequence.Next(r)
-		dbKey := c.buildKeyName(keyNum)
-		keys = append(keys, dbKey)
-		values = append(values, c.buildValues(state, dbKey))
-	}
-	defer func() {
-		for _, value := range values {
-			c.putValues(value)
-		}
-	}()
-
-	numOfRetries := int64(0)
-	var err error
-	for {
-		err = batchDB.BatchInsert(ctx, c.table, keys, values)
-		if err == nil {
-			break
-		}
-
-		select {
-		case <-ctx.Done():
-			if ctx.Err() == context.Canceled {
-				return nil
-			}
-		default:
-		}
-
-		// Retry if configured. Without retrying, the load process will fail
-		// even if one single insertion fails. User can optionally configure
-		// an insertion retry limit (default is 0) to enable retry.
-		numOfRetries++
-		if numOfRetries > c.insertionRetryLimit {
-			break
-		}
-
-		// Sleep for a random time betweensz [0.8, 1.2)*insertionRetryInterval
-		sleepTimeMs := float64((c.insertionRetryInterval * 1000)) * (0.8 + 0.4*r.Float64())
-
-		time.Sleep(time.Duration(sleepTimeMs) * time.Millisecond)
-	}
-	return err
+func (c *core) DoBatchInsert(ctx context.Context, batchSize int, db ycsb.DB) []string {
+	util.Fatalf("DoBatchInsert not support")
+	return nil
 }
 
 // DoTransaction implements the Workload DoTransaction interface.
-func (c *core) DoTransaction(ctx context.Context, db ycsb.DB) error {
+func (c *core) DoTransaction(ctx context.Context, db ycsb.DB) []string {
 	state := ctx.Value(stateKey).(*coreState)
 	r := state.r
 
@@ -407,27 +345,9 @@ func (c *core) DoTransaction(ctx context.Context, db ycsb.DB) error {
 }
 
 // DoBatchTransaction implements the Workload DoBatchTransaction interface
-func (c *core) DoBatchTransaction(ctx context.Context, batchSize int, db ycsb.DB) error {
-	batchDB, ok := db.(ycsb.BatchDB)
-	if !ok {
-		return fmt.Errorf("the %T does't implement the batchDB interface", db)
-	}
-	state := ctx.Value(stateKey).(*coreState)
-	r := state.r
-
-	operation := operationType(c.operationChooser.Next(r))
-	switch operation {
-	case read:
-		return c.doBatchTransactionRead(ctx, batchSize, batchDB, state)
-	case insert:
-		return c.doBatchTransactionInsert(ctx, batchSize, batchDB, state)
-	case update:
-		return c.doBatchTransactionUpdate(ctx, batchSize, batchDB, state)
-	case scan:
-		panic("The batch mode don't support the scan operation")
-	default:
-		return nil
-	}
+func (c *core) DoBatchTransaction(ctx context.Context, batchSize int, db ycsb.DB) []string {
+	util.Fatalf("DoBatchTransaction not support")
+	return nil
 }
 
 func (c *core) nextKeyNum(state *coreState) int64 {
@@ -447,7 +367,7 @@ func (c *core) nextKeyNum(state *coreState) int64 {
 	return keyNum
 }
 
-func (c *core) doTransactionRead(ctx context.Context, db ycsb.DB, state *coreState) error {
+func (c *core) doTransactionRead(ctx context.Context, db ycsb.DB, state *coreState) []string {
 	r := state.r
 	keyNum := c.nextKeyNum(state)
 	keyName := c.buildKeyName(keyNum)
@@ -460,19 +380,22 @@ func (c *core) doTransactionRead(ctx context.Context, db ycsb.DB, state *coreSta
 		fields = state.fieldNames
 	}
 
-	values, err := db.Read(ctx, c.table, keyName, fields)
-	if err != nil {
-		return err
-	}
+	query := c.Read(fields, keyName)
 
-	if c.dataIntegrity {
-		c.verifyRow(state, keyName, values)
-	}
-
-	return nil
+	return []string{query}
 }
 
-func (c *core) doTransactionReadModifyWrite(ctx context.Context, db ycsb.DB, state *coreState) error {
+func (c *core) Read(fields []string, keyName string) string {
+	var query string
+	if len(fields) == 0 {
+		query = fmt.Sprintf(`SELECT * FROM %s %s WHERE YCSB_KEY = "%s"`, c.table, "FORCE INDEX(`PRIMARY`)", keyName)
+	} else {
+		query = fmt.Sprintf(`SELECT %s FROM %s %s WHERE YCSB_KEY = "%s"`, strings.Join(fields, ","), c.table, "FORCE INDEX(`PRIMARY`)", keyName)
+	}
+	return query
+}
+
+func (c *core) doTransactionReadModifyWrite(ctx context.Context, db ycsb.DB, state *coreState) []string {
 	start := time.Now()
 	defer func() {
 		measurement.Measure("READ_MODIFY_WRITE", time.Now().Sub(start))
@@ -498,23 +421,10 @@ func (c *core) doTransactionReadModifyWrite(ctx context.Context, db ycsb.DB, sta
 	}
 	defer c.putValues(values)
 
-	readValues, err := db.Read(ctx, c.table, keyName, fields)
-	if err != nil {
-		return err
-	}
-
-	if err := db.Update(ctx, c.table, keyName, values); err != nil {
-		return err
-	}
-
-	if c.dataIntegrity {
-		c.verifyRow(state, keyName, readValues)
-	}
-
-	return nil
+	return []string{c.Read(fields, keyName), c.Update(values, keyName)}
 }
 
-func (c *core) doTransactionInsert(ctx context.Context, db ycsb.DB, state *coreState) error {
+func (c *core) doTransactionInsert(ctx context.Context, db ycsb.DB, state *coreState) []string {
 	r := state.r
 	keyNum := c.transactionInsertKeySequence.Next(r)
 	defer c.transactionInsertKeySequence.Acknowledge(keyNum)
@@ -522,10 +432,33 @@ func (c *core) doTransactionInsert(ctx context.Context, db ycsb.DB, state *coreS
 	values := c.buildValues(state, dbKey)
 	defer c.putValues(values)
 
-	return db.Insert(ctx, c.table, dbKey, values)
+	args := make([]interface{}, 0, 1+len(values))
+	args = append(args, dbKey)
+
+	var buf bytes.Buffer
+
+	buf.WriteString("INSERT IGNORE INTO ")
+	buf.WriteString(c.table)
+	buf.WriteString(" (YCSB_KEY")
+
+	pairs := util.NewFieldPairs(values)
+	for _, p := range pairs {
+		args = append(args, p.Value)
+		buf.WriteString(" ,")
+		buf.WriteString(p.Field)
+	}
+	buf.WriteString(") VALUES (?")
+
+	for i := 0; i < len(pairs); i++ {
+		buf.WriteString(" ,?")
+	}
+
+	buf.WriteByte(')')
+
+	return []string{c.buildSQL(buf.String(), args...)}
 }
 
-func (c *core) doTransactionScan(ctx context.Context, db ycsb.DB, state *coreState) error {
+func (c *core) doTransactionScan(ctx context.Context, db ycsb.DB, state *coreState) []string {
 	r := state.r
 	keyNum := c.nextKeyNum(state)
 	startKeyName := c.buildKeyName(keyNum)
@@ -540,12 +473,17 @@ func (c *core) doTransactionScan(ctx context.Context, db ycsb.DB, state *coreSta
 		fields = state.fieldNames
 	}
 
-	_, err := db.Scan(ctx, c.table, startKeyName, int(scanLen), fields)
+	var query string
+	if len(fields) == 0 {
+		query = fmt.Sprintf(`SELECT * FROM %s %s WHERE YCSB_KEY >= %s LIMIT %d`, c.table, "FORCE INDEX(`PRIMARY`)", startKeyName, int(scanLen))
+	} else {
+		query = fmt.Sprintf(`SELECT %s FROM %s %s WHERE YCSB_KEY >= %s LIMIT %d`, strings.Join(fields, ","), c.table, "FORCE INDEX(`PRIMARY`)", startKeyName, int(scanLen))
+	}
 
-	return err
+	return []string{query}
 }
 
-func (c *core) doTransactionUpdate(ctx context.Context, db ycsb.DB, state *coreState) error {
+func (c *core) doTransactionUpdate(ctx context.Context, db ycsb.DB, state *coreState) []string {
 	keyNum := c.nextKeyNum(state)
 	keyName := c.buildKeyName(keyNum)
 
@@ -558,32 +496,42 @@ func (c *core) doTransactionUpdate(ctx context.Context, db ycsb.DB, state *coreS
 
 	defer c.putValues(values)
 
-	return db.Update(ctx, c.table, keyName, values)
+	query := c.Update(values, keyName)
+
+	return []string{query}
 }
 
-func (c *core) doBatchTransactionRead(ctx context.Context, batchSize int, db ycsb.BatchDB, state *coreState) error {
-	r := state.r
-	var fields []string
+func (c *core) Update(values map[string][]byte, keyName string) string {
+	var buf bytes.Buffer
 
-	if !c.readAllFields {
-		fieldName := state.fieldNames[c.fieldChooser.Next(r)]
-		fields = append(fields, fieldName)
-	} else {
-		fields = state.fieldNames
+	buf.WriteString("UPDATE ")
+	buf.WriteString(c.table)
+	buf.WriteString(" SET ")
+	firstField := true
+	pairs := util.NewFieldPairs(values)
+	args := make([]interface{}, 0, len(values)+1)
+	for _, p := range pairs {
+		if firstField {
+			firstField = false
+		} else {
+			buf.WriteString(", ")
+		}
+
+		buf.WriteString(p.Field)
+		buf.WriteString(`= ?`)
+		args = append(args, p.Value)
 	}
+	buf.WriteString(" WHERE YCSB_KEY = ?")
+	args = append(args, keyName)
 
-	keys := make([]string, batchSize)
-	for i := 0; i < batchSize; i++ {
-		keys[i] = c.buildKeyName(c.nextKeyNum(state))
-	}
+	query := c.buildSQL(buf.String(), args...)
+	return query
+}
 
-	_, err := db.BatchRead(ctx, c.table, keys, fields)
-	if err != nil {
-		return err
-	}
-
-	// TODO should we verify the result?
-	return nil
+func (c *core) buildSQL(template string, args ...interface{}) string {
+	template = strings.ReplaceAll(template, "?", "\"%v\"")
+	query := fmt.Sprintf(template, args...)
+	return query
 }
 
 func (c *core) doBatchTransactionInsert(ctx context.Context, batchSize int, db ycsb.BatchDB, state *coreState) error {

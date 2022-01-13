@@ -35,13 +35,22 @@ func Fatal(args ...interface{}) {
 	os.Exit(1)
 }
 
-var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+var letters = []rune("mnopqrstuvwxyz这是一些汉字测试字符这是一些汉字测试字符NOPQRSTUVWXYZ")
 
 // RandBytes fills the bytes with alphabetic characters randomly
-func RandBytes(r *rand.Rand, b []byte) {
-	for i := range b {
-		b[i] = letters[r.Intn(len(letters))]
+//func RandBytes(r *rand.Rand, b []byte) {
+//	for i := range b {
+//		b[i] = letters[r.Intn(len(letters))]
+//	}
+//}
+
+func RandBytes(r *rand.Rand, c int) []byte {
+	var buf bytes.Buffer
+	for i := 0; i < c; i++ {
+		buf.WriteRune(letters[r.Intn(len(letters))])
 	}
+
+	return buf.Bytes()
 }
 
 // BufPool is a bytes.Buffer pool

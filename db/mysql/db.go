@@ -17,6 +17,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/pingcap/go-ycsb/pkg/prop"
@@ -168,42 +169,44 @@ func (db *mysqlDB) queryRows(ctx context.Context, query string, count int, args 
 	if db.verbose {
 		fmt.Printf("%s %v\n", query, args)
 	}
+	query = strings.ReplaceAll(query, "?", "\"%s\"")
+	query += "\n"
+	_, err := fmt.Fprintf(os.Stdout, query, args...)
+	//stmt, err := db.getAndCacheStmt(ctx, query)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//rows, err := stmt.QueryContext(ctx, args...)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//defer rows.Close()
+	//
+	//cols, err := rows.Columns()
+	//if err != nil {
+	//	return nil, err
+	//}
+	//
+	//vs := make([]map[string][]byte, 0, count)
+	//for rows.Next() {
+	//	m := make(map[string][]byte, len(cols))
+	//	dest := make([]interface{}, len(cols))
+	//	for i := 0; i < len(cols); i++ {
+	//		v := new([]byte)
+	//		dest[i] = v
+	//	}
+	//	if err = rows.Scan(dest...); err != nil {
+	//		return nil, err
+	//	}
+	//
+	//	for i, v := range dest {
+	//		m[cols[i]] = *v.(*[]byte)
+	//	}
+	//
+	//	vs = append(vs, m)
+	//}
 
-	stmt, err := db.getAndCacheStmt(ctx, query)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := stmt.QueryContext(ctx, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, err
-	}
-
-	vs := make([]map[string][]byte, 0, count)
-	for rows.Next() {
-		m := make(map[string][]byte, len(cols))
-		dest := make([]interface{}, len(cols))
-		for i := 0; i < len(cols); i++ {
-			v := new([]byte)
-			dest[i] = v
-		}
-		if err = rows.Scan(dest...); err != nil {
-			return nil, err
-		}
-
-		for i, v := range dest {
-			m[cols[i]] = *v.(*[]byte)
-		}
-
-		vs = append(vs, m)
-	}
-
-	return vs, rows.Err()
+	return nil, err
 }
 
 func (db *mysqlDB) Read(ctx context.Context, table string, key string, fields []string) (map[string][]byte, error) {
@@ -275,14 +278,16 @@ func (db *mysqlDB) execQuery(ctx context.Context, query string, args ...interfac
 	if db.verbose {
 		fmt.Printf("%s %v\n", query, args)
 	}
-
-	stmt, err := db.getAndCacheStmt(ctx, query)
-	if err != nil {
-		return err
-	}
-
-	_, err = stmt.ExecContext(ctx, args...)
-	db.clearCacheIfFailed(ctx, query, err)
+	query = strings.ReplaceAll(query, "?", "\"%s\"")
+	query += "\n"
+	_, err := fmt.Fprintf(os.Stdout, query, args...)
+	//stmt, err := db.getAndCacheStmt(ctx, query)
+	//if err != nil {
+	//	return err
+	//}
+	//
+	//_, err = stmt.ExecContext(ctx, args...)
+	//db.clearCacheIfFailed(ctx, query, err)
 	return err
 }
 

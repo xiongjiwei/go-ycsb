@@ -14,14 +14,10 @@
 package main
 
 import (
-	"fmt"
-	"strconv"
-	"time"
-
 	"github.com/pingcap/go-ycsb/pkg/client"
-	"github.com/pingcap/go-ycsb/pkg/measurement"
 	"github.com/pingcap/go-ycsb/pkg/prop"
 	"github.com/spf13/cobra"
+	"strconv"
 )
 
 func runClientCommandFunc(cmd *cobra.Command, args []string, doTransactions bool) {
@@ -48,18 +44,18 @@ func runClientCommandFunc(cmd *cobra.Command, args []string, doTransactions bool
 		}
 	})
 
-	fmt.Println("***************** properties *****************")
-	for key, value := range globalProps.Map() {
-		fmt.Printf("\"%s\"=\"%s\"\n", key, value)
-	}
-	fmt.Println("**********************************************")
+	//fmt.Println("***************** properties *****************")
+	//for key, value := range globalProps.Map() {
+	//	fmt.Printf("\"%s\"=\"%s\"\n", key, value)
+	//}
+	//fmt.Println("**********************************************")
 
 	c := client.NewClient(globalProps, globalWorkload, globalDB)
-	start := time.Now()
+	//start := time.Now()
 	c.Run(globalContext)
 
-	fmt.Printf("Run finished, takes %s\n", time.Now().Sub(start))
-	measurement.Output()
+	//fmt.Printf("Run finished, takes %s\n", time.Now().Sub(start))
+	//measurement.Output()
 }
 
 func runLoadCommandFunc(cmd *cobra.Command, args []string) {
