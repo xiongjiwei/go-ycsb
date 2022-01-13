@@ -475,9 +475,9 @@ func (c *core) doTransactionScan(ctx context.Context, db ycsb.DB, state *coreSta
 
 	var query string
 	if len(fields) == 0 {
-		query = fmt.Sprintf(`SELECT * FROM %s %s WHERE YCSB_KEY >= %s LIMIT %d`, c.table, "FORCE INDEX(`PRIMARY`)", startKeyName, int(scanLen))
+		query = fmt.Sprintf(`SELECT * FROM %s %s WHERE YCSB_KEY >= '%s' LIMIT %d`, c.table, "FORCE INDEX(`PRIMARY`)", startKeyName, int(scanLen))
 	} else {
-		query = fmt.Sprintf(`SELECT %s FROM %s %s WHERE YCSB_KEY >= %s LIMIT %d`, strings.Join(fields, ","), c.table, "FORCE INDEX(`PRIMARY`)", startKeyName, int(scanLen))
+		query = fmt.Sprintf(`SELECT %s FROM %s %s WHERE YCSB_KEY >= '%s' LIMIT %d`, strings.Join(fields, ","), c.table, "FORCE INDEX(`PRIMARY`)", startKeyName, int(scanLen))
 	}
 
 	return []string{query}
